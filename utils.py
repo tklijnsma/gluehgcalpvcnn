@@ -16,7 +16,7 @@ def colored(text, color=None):
         text = COLORS[color] + text + RESET
     return text
 
-def setup_logger(name='root', fmt=None):
+def setup_logger(name='glue', fmt=None):
     if name in logging.Logger.manager.loggerDict:
         logger = logging.getLogger(name)
         logger.info('Logger %s is already defined', name)
@@ -25,7 +25,7 @@ def setup_logger(name='root', fmt=None):
             fmt = logging.Formatter(
                 fmt = (
                     colored(
-                        '%(levelname)8s:%(asctime)s:%(module)s:',
+                        '%(levelname)8s:%(asctime)s:%(module)s:%(lineno)s',
                         'yellow'
                         )
                     + ' %(message)s'

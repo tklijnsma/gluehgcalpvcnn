@@ -16,40 +16,48 @@ torch.backends.cudnn.enabled = True
 # Dir of this file
 GLUEDIR = osp.abspath(osp.dirname(__file__))
 
-import utils
-logger = logging.getLogger('root')
+from . import utils
+logger = logging.getLogger('glue')
 
 
 class LindseysTrainingScript(object):
     """docstring for LindseysTrainingScript"""
-    def __init__(self):
+    def __init__(self, debug=True):
         super(LindseysTrainingScript, self).__init__()
+        self.debug = debug
 
         self.directed = False
         self.train_batch_size = 1
         self.valid_batch_size = 1
-        self.n_epochs = 50
 
-        self.dataset_path = osp.join(
-            GLUEDIR,
-            'data/single-muon-july2019-npz'
-            )
-
-        # self.categorized = False
-        # self.forcecats = False
         self.categorized = True
         self.forcecats = True
-        self.cats = 1
+        self.cats = 4
+        self.model_name = 'PVCNN'
+        self.loss = 'nll_loss'
 
-        # self.model_name = 'EdgeNet2'
-        self.model_name = 'EdgeNetWithCategories'
-        self.loss = 'binary_cross_entropy'
-        self.optimizer = 'Adam'
+        self.optimizer = 'AdamW'
         self.hidden_dim = 64
         self.n_iters = 6
         self.lr = 0.01
-
         self.output_dir = osp.join(GLUEDIR, '../output')
+
+        if self.debug:
+            self.n_epochs = 3
+            self.dataset_path = osp.join(
+                GLUEDIR,
+                '../data/single-tau-testsample'
+                )
+            logger.setLevel(logging.DEBUG)
+            logging.getLogger('pvcnnlogger').setLevel(logging.DEBUG)
+        else:
+            self.n_epochs = 15
+            self.dataset_path = osp.join(
+                GLUEDIR,
+                '../data/single-tau'
+                )
+            logger.setLevel(logging.INFO)
+            logging.getLogger('pvcnnlogger').setLevel(logging.INFO)
 
 
     def run_edgenet(self):
@@ -59,6 +67,8 @@ class LindseysTrainingScript(object):
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         logger.info('using device %s'%device)
 
+        if not osp.isdir(self.dataset_path):
+            raise OSError('{0} is not a valid path'.format(self.dataset_path))
         logger.info(self.dataset_path)
         full_dataset = HitGraphDataset(
             self.dataset_path,
@@ -72,17 +82,17 @@ class LindseysTrainingScript(object):
         splits = np.cumsum([fulllen-tv_num,0,tv_num])
         logger.info('%s, %s', fulllen, splits)
 
+        if self.debug:
+            # Run on very limited set of events just to check whether the code runs without crashing
+            splits = [ 0, 7, 10 ]
+
         train_dataset = torch.utils.data.Subset(
             full_dataset,
-            # np.arange(start=0,stop=splits[1])
-            # list(range(0, splits[0]))
-            list(range(0, 50)) # For quicker debugging
+            list(range(0, splits[1]))
             )
         valid_dataset = torch.utils.data.Subset(
             full_dataset,
-            # np.arange(start=splits[1],stop=splits[2])
-            # list(range(splits[1], splits[2]))
-            list(range(50, 60)) # For quicker debugging
+            list(range(splits[1], splits[2]))
             )
         train_loader = DataLoader(train_dataset, batch_size=self.train_batch_size, pin_memory=True)
         valid_loader = DataLoader(valid_dataset, batch_size=self.valid_batch_size, shuffle=False)
@@ -99,10 +109,11 @@ class LindseysTrainingScript(object):
                 num_classes = int(d[0].y.max().item()) + 1 if d[0].y.dim() == 1 else d[0].y.size(1)
             else:
                 num_classes = self.cats
+        # num_classes = 2
         logger.debug('num_classes = %s', num_classes)
 
-        # the_weights = np.array([1., 1., 1., 1.]) #[0.017, 1., 1., 10.]
-        the_weights = np.array([1.]) # Only signal and noise now
+        the_weights = np.array([1., 1., 1., 1.]) #[0.017, 1., 1., 10.]
+        # the_weights = np.array([1., 1.]) # Only signal and noise now
         trainer = GNNTrainer(
             category_weights = the_weights, 
             output_dir = self.output_dir,
@@ -120,16 +131,26 @@ class LindseysTrainingScript(object):
                 threshold=0.01, patience=5
                 )
         
+        if 'pvcnn' in self.model_name.lower():
+            model_args = {
+                'in_channels': 5,  # x, y, z, E, t
+                }
+        else:
+            model_args = {
+                'input_dim'     : num_features,
+                'hidden_dim'    : self.hidden_dim,
+                'n_iters'       : self.n_iters,
+                'output_dim'    : num_classes
+                }
+
         trainer.build_model(
             name          = self.model_name,
             loss_func     = self.loss,
             optimizer     = self.optimizer,
             learning_rate = self.lr,
             lr_scaling    = lr_scaling,
-            input_dim     = num_features,
-            hidden_dim    = self.hidden_dim,
-            n_iters       = self.n_iters,
-            output_dim    = num_classes
+            num_classes   = num_classes,
+            **model_args
             )
         
         trainer.print_model_summary()
